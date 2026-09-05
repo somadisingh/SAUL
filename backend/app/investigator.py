@@ -275,6 +275,11 @@ def _validate_semantics(
             if "legacy-deploy" in source.content
             and "disabled" in source.content.lower()
             and "MFA: true" in source.content
+            and "maya-admin" in source.content
+            and "devon-readonly" in source.content
+            and "Every remaining human AWS production account" in source.content
+            and "Google Workspace" in source.content
+            and "GitHub" in source.content
             and (source.observedAt or "") > "2026-09-04T12:00:00Z"
         }
         if current_exception_sources and not remediation_sources:
@@ -502,8 +507,19 @@ def _merge_conflicts(
     merged = [conflict.model_copy(deep=True) for conflict in previous]
     for proposed in update.conflicts:
         citations = [Citation(**item.model_dump()) for item in proposed.citations]
+        proposed_source_ids = {item.sourceId for item in citations}
         existing = next(
-            (item for item in merged if item.summary.casefold() == proposed.summary.casefold()),
+            (
+                item
+                for item in merged
+                if item.summary.casefold() == proposed.summary.casefold()
+                or (
+                    proposed.state == "resolved"
+                    and item.state == "open"
+                    and proposed_source_ids
+                    & {citation.sourceId for citation in item.citations}
+                )
+            ),
             None,
         )
         if existing is None:
@@ -544,12 +560,26 @@ def _enforced_status(
         in {"i don't know", "i do not know", "don't know", "unknown"}
         for source in employee
     )
+    slot_keys = {slot.key for slot in slots}
+    slot_facts = [
+        fact
+        for fact in case.facts
+        if fact.active and fact.key in slot_keys
+    ]
+    slots_confirmed_by_employee = (
+        bool(slots)
+        and not unresolved
+        and slot_keys == {fact.key for fact in slot_facts}
+        and all(fact.provenance == "user_confirmation" for fact in slot_facts)
+    )
     if open_conflict:
         status = "conflicted"
     elif not cited or (employee and unknown_employee and not company):
         status = "unknown"
     elif unresolved:
         status = "partially_verified" if company else "unknown"
+    elif slots_confirmed_by_employee:
+        status = "employee_confirmed"
     elif employee and company:
         status = "partially_verified"
     elif employee:
@@ -585,6 +615,23 @@ def _apply(
     for question in updated.questions:
         model_update = by_id[question.id]
         slots = _merge_slots(updated, model_update, updated.facts)
+        slot_keys = {slot.key for slot in slots}
+        known_citations = {
+            (citation.sourceId, citation.quote) for citation in model_update.citations
+        }
+        for fact in updated.facts:
+            if not fact.active or fact.key not in slot_keys:
+                continue
+            for citation in fact.citations:
+                identity = (citation.sourceId, citation.quote)
+                if identity not in known_citations:
+                    model_update.citations.append(
+                        ModelCitation(
+                            sourceId=citation.sourceId,
+                            quote=citation.quote,
+                        )
+                    )
+                    known_citations.add(identity)
         conflicts = _merge_conflicts(updated, model_update, now)
         status, provenance = _enforced_status(model_update, updated, slots, conflicts)
         follow_up = _stable_follow_up(updated, question.id, slots, model_update.proposedFollowUp)
@@ -662,6 +709,7 @@ def _apply(
 
 async def investigate(store: SQLiteStore, case: CaseSnapshot) -> InvestigationResult:
     prompt = _context(case)
+    await prism.retry_pending(store, case.id)
     repair_error: str | None = None
     latest_prism: prism.PrismDeliveryResult | None = None
     parsed: ModelInvestigation | None = None

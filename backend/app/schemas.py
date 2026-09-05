@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 from urllib.parse import urlparse
 
@@ -155,7 +155,7 @@ class SourceCreate(WireModel):
     name: str = Field(min_length=1, max_length=200)
     kind: Literal["policy", "configuration", "message", "report"]
     scope: str = Field(min_length=1, max_length=500)
-    content: str = Field(min_length=1, max_length=30_000)
+    content: str = Field(min_length=1)
     observedAt: str | None
 
     @field_validator("name", "scope")
@@ -185,12 +185,12 @@ class SourceCreate(WireModel):
             raise ValueError("observedAt must be an ISO-8601 timestamp") from exc
         if parsed.tzinfo is None:
             raise ValueError("observedAt must include a timezone")
-        return value
+        return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class QuestionnaireImport(WireModel):
     format: Literal["csv", "json"]
-    content: str = Field(min_length=1, max_length=30_000)
+    content: str = Field(min_length=1)
 
 
 class InvestigateRequest(WireModel):
@@ -204,6 +204,13 @@ class MessageCreate(WireModel):
     employeeRole: str = Field(min_length=1, max_length=100)
     replyToFollowUpId: str | None
     clientMessageId: str = Field(min_length=1, max_length=200)
+
+    @field_validator("text", mode="before")
+    @classmethod
+    def normalize_message_text(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.replace("\r\n", "\n").replace("\r", "\n")
+        return value
 
     @field_validator("questionId", "text", "employeeName", "employeeRole", "clientMessageId")
     @classmethod

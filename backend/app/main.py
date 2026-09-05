@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import os
+import re
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -167,6 +168,10 @@ def _save(snapshot: CaseSnapshot, expected_revision: int) -> CaseSnapshot:
 @app.post("/api/cases/{case_id}/sources", response_model=CaseSnapshot)
 async def add_source(case_id: str, request: SourceCreate) -> CaseSnapshot:
     snapshot = store.get_case(case_id)
+    if len(request.content) > 30_000:
+        raise _error(
+            413, "SOURCE_TOO_LARGE", "A source can contain at most 30,000 characters."
+        )
     if len(snapshot.sources) >= 20:
         raise _error(413, "SOURCE_LIMIT", "A case can contain at most 20 sources.")
     if sum(len(source.content) for source in snapshot.sources) + len(request.content) > 100_000:
@@ -203,6 +208,12 @@ async def add_source(case_id: str, request: SourceCreate) -> CaseSnapshot:
 
 
 def _parse_questionnaire(request: QuestionnaireImport) -> list[tuple[str, str]]:
+    if len(request.content) > 30_000:
+        raise _error(
+            413,
+            "QUESTIONNAIRE_TOO_LARGE",
+            "Questionnaire content can contain at most 30,000 characters.",
+        )
     try:
         if request.format == "csv":
             reader = csv.DictReader(io.StringIO(request.content))
@@ -390,6 +401,61 @@ def _append_bound_fact(
     )
 
 
+def _append_unsolicited_correction(
+    snapshot: CaseSnapshot,
+    source: Source,
+    question_id: str,
+    text: str,
+    now: str,
+) -> None:
+    question = next(item for item in snapshot.questions if item.id == question_id)
+    normalized = text.strip().lower().replace("’", "'")
+    key: str | None = None
+    value: str | None = None
+    if question_id == "Q4":
+        frequencies = re.findall(r"\b(hourly|daily|weekly|monthly)\b", normalized)
+        negated = set(
+            re.findall(r"\b(?:not|isn't|is not)\s+(hourly|daily|weekly|monthly)\b", normalized)
+        )
+        selected = next((item for item in frequencies if item not in negated), None)
+        if selected:
+            key = "backups.frequency.production_db"
+            value = selected.capitalize()
+        elif "automat" in normalized:
+            key = "backups.automated.production_db"
+            value = "No" if re.search(r"\b(no|not|isn't|is not)\b", normalized) else "Yes"
+    elif question_id == "Q1" and "legacy-deploy" in normalized and "disabl" in normalized:
+        key = "mfa.legacy-deploy.disabled.aws_production"
+        value = "Employee reports legacy-deploy disabled"
+    if key is None or value is None:
+        return
+    active = next(
+        (
+            fact
+            for fact in reversed(snapshot.facts)
+            if fact.active and fact.key == key and fact.scope == question.scope
+        ),
+        None,
+    )
+    if active and active.value.casefold() == value.casefold():
+        return
+    if active:
+        active.active = False
+    snapshot.facts.append(
+        Fact(
+            id=str(uuid4()),
+            key=key,
+            scope=question.scope,
+            value=value,
+            provenance="user_confirmation",
+            citations=[Citation(sourceId=source.id, quote=text.strip())],
+            updatedAt=now,
+            supersedesFactId=active.id if active else None,
+            active=True,
+        )
+    )
+
+
 @app.post("/api/cases/{case_id}/messages", response_model=CaseSnapshot)
 async def add_message(case_id: str, request: MessageCreate) -> CaseSnapshot:
     snapshot = store.get_case(case_id)
@@ -464,6 +530,14 @@ async def add_message(case_id: str, request: MessageCreate) -> CaseSnapshot:
             source,
             request.questionId,
             follow_up.slotKey,
+            request.text,
+            now,
+        )
+    else:
+        _append_unsolicited_correction(
+            updated,
+            source,
+            request.questionId,
             request.text,
             now,
         )

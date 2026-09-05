@@ -101,6 +101,6 @@ async def retry_pending(
     if not configured():
         return None
     result: PrismDeliveryResult | None = None
-    for item in store.pending_prism_deliveries(case_id):
+    for item in store.pending_prism_deliveries(case_id, limit=1):
         result = await deliver(store, case_id, item["traceId"], item["payload"])
     return result
