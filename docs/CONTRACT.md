@@ -78,6 +78,7 @@ interface Question {
 }
 interface Message {
   id: string;
+  clientMessageId: string | null; // user's deduplication ID; null for assistant messages
   questionId: string;
   role: "assistant" | "user";
   text: string;
