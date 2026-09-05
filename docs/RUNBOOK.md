@@ -91,6 +91,12 @@ completed model exchange, the backend validates schema, question coverage,
 exact citations, and semantic guardrails before applying any output. PRISM
 receives the pass/fail result, review requirement, output-release decision, and
 PII category audit in trace metadata.
+SAUL reserves `LLM_MAX_OUTPUT_TOKENS` (default `8192`) for a complete response,
+records the provider `finish_reason`, and rejects `length` or `content_filter`
+termination as `incomplete_output`. Answers and citation quotes are bounded so
+all question updates fit in one JSON object. PRISM receives a compact evidence
+manifest instead of the full source corpus, while the full corpus remains the
+input to SAUL and the server validates every exact citation against it.
 PRISM's HTTP trace records exchanges; it is not an automatic SDK trajectory and
 its evaluator output is not a formal security certification.
 
