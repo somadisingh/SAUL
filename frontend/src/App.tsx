@@ -125,6 +125,10 @@ export default function App() {
 
   const investigate = async () => {
     if (!caseSnapshot) return;
+    if (!health?.modelConfigured) {
+      setError("SAUL is unavailable because the model is not configured. Configure LLM_BASE_URL, LLM_API_KEY, and LLM_MODEL on the backend before investigating.");
+      return;
+    }
     setMutation("investigate");
     setError(null);
     try {
@@ -300,7 +304,14 @@ export default function App() {
           <span><i className="dot conflict" />{counts.conflicted} conflicted</span>
           <span><i className="dot unknown" />{counts.unknown} unknown</span>
         </div>
-        <button className="primary-button investigate-button" disabled={Boolean(mutation) || caseSnapshot.questions.length === 0} onClick={() => void investigate()}>{mutation === "investigate" ? "Saul is reviewing the evidence…" : caseSnapshot.needsInvestigation ? "Investigate again" : "Investigate evidence"}</button>
+        <button
+          className="primary-button investigate-button"
+          disabled={Boolean(mutation) || caseSnapshot.questions.length === 0 || !health?.modelConfigured}
+          title={!health?.modelConfigured ? "Configure the backend model before running SAUL" : undefined}
+          onClick={() => void investigate()}
+        >
+          {mutation === "investigate" ? "Saul is reviewing the evidence…" : !health?.modelConfigured ? "Model setup required" : caseSnapshot.needsInvestigation ? "Investigate again" : "Investigate evidence"}
+        </button>
       </section>
 
       {caseSnapshot.needsInvestigation && <div className="review-banner"><strong>Evidence changed — investigate again.</strong><span>Existing answers remain visible but are pending review. CSV export is paused.</span></div>}

@@ -79,12 +79,18 @@ The implementation follows the official HTTP documentation at
 - required payload fields: `project_id`, `model`, `input_messages`,
   `output_message`, and `latency_ms`
 - SAUL also sends case `session_id`, stable `trace_id`, `agent_id: "saul"`,
-  evidence IDs, and pre-call statuses
+  evidence IDs, pre-call statuses, a deterministic compliance-gate result,
+  and a category-only PII-access audit (never raw detected values)
 
 Set the three `PRISMTRACE_*` variables, run a genuine investigation, and open
 the PRISM Traces dashboard to confirm the returned trace reference. Delivery
 has a short timeout and does not block a valid questionnaire update. Failed or
 unconfigured payloads remain in SQLite for a later investigation retry.
+The frontend prevents investigations while the model is unconfigured. For each
+completed model exchange, the backend validates schema, question coverage,
+exact citations, and semantic guardrails before applying any output. PRISM
+receives the pass/fail result, review requirement, output-release decision, and
+PII category audit in trace metadata.
 PRISM's HTTP trace records exchanges; it is not an automatic SDK trajectory and
 its evaluator output is not a formal security certification.
 

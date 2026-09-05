@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,11 +17,35 @@ class PrismDeliveryResult:
     message: str
 
 
+PII_PATTERNS = {
+    "email": re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
+    "phone": re.compile(r"(?<!\w)(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}(?!\w)"),
+    "ssn": re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"),
+    "payment_card": re.compile(r"(?<!\d)(?:\d[ -]*?){13,19}(?!\d)"),
+}
+
+
 def configured() -> bool:
     return all(
         os.getenv(name, "").strip()
         for name in ("PRISMTRACE_HOST", "PRISMTRACE_PROJECT_ID", "PRISMTRACE_API_KEY")
     )
+
+
+def pii_access_audit(input_messages: list[dict[str, str]]) -> dict[str, Any]:
+    """Describe PII categories exposed to the model without copying PII values."""
+    categories = sorted(
+        category
+        for category, pattern in PII_PATTERNS.items()
+        if any(pattern.search(message.get("content", "")) for message in input_messages)
+    )
+    return {
+        "logged": True,
+        "pii_detected": bool(categories),
+        "categories": categories,
+        "message_count": len(input_messages),
+        "raw_values_logged": False,
+    }
 
 
 def build_payload(
