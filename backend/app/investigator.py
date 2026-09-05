@@ -40,7 +40,7 @@ class ModelOutputError(Exception):
 class ModelCitation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     sourceId: str
-    quote: str = Field(min_length=1, max_length=500)
+    quote: str = Field(min_length=1, max_length=2_000)
 
 
 class ModelFact(BaseModel):
@@ -119,8 +119,15 @@ Every question update and every required array must be present in one complete J
 each answer under 1,200 characters and each exact citation quote under 500 characters. Do not
 repeat a long citation verbatim in the answer. If the available output budget cannot fit every
 question, return concise schema-valid unknown answers instead of partial or truncated JSON.
+For questionnaire batches, optimize for completion: keep each answer under 350 characters, use
+at most one citation per question with a quote under 240 characters, and leave facts, missingSlots,
+and conflicts empty unless an entry is necessary to express evidence uncertainty. Keep the final
+summary under 240 characters. Never restate citation text at length inside the answer.
 
 Analyze every supplied question. Use exact supporting quotes copied from source content.
+Every citation quote must be a contiguous, character-for-character copy from source content;
+never paraphrase, normalize punctuation, join separate passages, or complete a sentence. If you
+cannot copy an exact quote, use an unknown answer with no citations for that question.
 Never invent source IDs, facts, dates, URLs, sponsor states, or missing evidence.
 Policy proves a documented requirement/process, not runtime enforcement or universal execution.
 Employee statements are attributed testimony, not independent company verification.
@@ -265,6 +272,44 @@ def _validate_citations(
                     raise ModelOutputError(
                         "The untrusted instruction note is not control evidence."
                     )
+
+
+def _downgrade_unsupported_citations(
+    result: ModelInvestigation, case: CaseSnapshot
+) -> list[str]:
+    """Fail closed per question when a model citation is not stored verbatim."""
+    sources = {source.id: source for source in case.sources}
+    downgraded: list[str] = []
+    for update in result.questions:
+        citations = list(update.citations)
+        citations.extend(
+            citation for fact in update.facts for citation in fact.citations
+        )
+        citations.extend(
+            citation for conflict in update.conflicts for citation in conflict.citations
+        )
+        for citation in citations:
+            source = sources.get(citation.sourceId)
+            if source is not None and citation.quote in source.content:
+                citation.quote = citation.quote[:500]
+        unsupported = any(
+            (source := sources.get(citation.sourceId)) is None
+            or not citation.quote
+            or citation.quote not in source.content
+            or source.name == "Untrusted questionnaire note"
+            for citation in citations
+        )
+        if not unsupported:
+            continue
+        update.answer = "Unknown. The supplied evidence does not establish this claim."
+        update.status = "unknown"
+        update.citations = []
+        update.facts = []
+        update.missingSlots = []
+        update.conflicts = []
+        update.proposedFollowUp = None
+        downgraded.append(update.questionId)
+    return downgraded
 
 
 def _validate_semantics(
@@ -724,8 +769,12 @@ async def investigate(store: SQLiteStore, case: CaseSnapshot) -> InvestigationRe
     repair_error: str | None = None
     latest_prism: prism.PrismDeliveryResult | None = None
     parsed: ModelInvestigation | None = None
+    downgraded_question_ids: list[str] = []
 
-    for phase, timeout in (("initial", 32.0), ("repair", 8.0)):
+    # Full-corpus questionnaire generations routinely take longer than a short
+    # interactive completion. Keep both attempts bounded while allowing the
+    # provider enough time to return schema-complete JSON.
+    for phase, timeout in (("initial", 120.0), ("repair", 60.0)):
         if phase == "initial":
             user_prompt = prompt
         else:
@@ -734,7 +783,13 @@ async def investigate(store: SQLiteStore, case: CaseSnapshot) -> InvestigationRe
                 "Return a complete corrected JSON object only."
             )
         exchange = await llm.chat(SYSTEM_PROMPT, user_prompt, timeout_seconds=timeout)
-        trace_id = str(uuid5(NAMESPACE_URL, f"saul:{case.id}:{case.revision}:{phase}"))
+        output_digest = hashlib.sha256(exchange.output_message.encode("utf-8")).hexdigest()
+        trace_id = str(
+            uuid5(
+                NAMESPACE_URL,
+                f"saul:{case.id}:{case.revision}:{phase}:{output_digest}",
+            )
+        )
         validation_error: ModelOutputError | None = None
         compliance_checks = {
             "schema_valid": False,
@@ -754,6 +809,7 @@ async def investigate(store: SQLiteStore, case: CaseSnapshot) -> InvestigationRe
                 compliance_checks["schema_valid"] = True
                 _validate_complete(parsed, case)
                 compliance_checks["question_coverage_valid"] = True
+                downgraded_question_ids = _downgrade_unsupported_citations(parsed, case)
                 _validate_citations(parsed, case)
                 compliance_checks["citations_exact"] = True
                 _validate_semantics(parsed, case)
@@ -763,6 +819,9 @@ async def investigate(store: SQLiteStore, case: CaseSnapshot) -> InvestigationRe
                 repair_error = str(exc)
 
         compliance_passed = validation_error is None
+        released_output = (
+            parsed.model_dump_json() if compliance_passed and parsed else exchange.output_message
+        )
         payload = prism.build_payload(
             model=exchange.model,
             input_messages=[
@@ -787,7 +846,7 @@ async def investigate(store: SQLiteStore, case: CaseSnapshot) -> InvestigationRe
                     ),
                 },
             ],
-            output_message=exchange.output_message,
+            output_message=released_output,
             latency_ms=exchange.latency_ms,
             case_id=case.id,
             trace_id=trace_id,
@@ -817,6 +876,7 @@ async def investigate(store: SQLiteStore, case: CaseSnapshot) -> InvestigationRe
                 "telemetry_input_mode": "evidence_manifest",
                 "requires_human_review": not compliance_passed,
                 "output_released_to_user": compliance_passed,
+                "server_downgraded_question_ids": downgraded_question_ids,
                 "validation_error_type": (
                     type(validation_error).__name__ if validation_error else None
                 ),

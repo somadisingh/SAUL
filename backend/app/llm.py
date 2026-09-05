@@ -93,7 +93,7 @@ async def chat(
     request_body = {
         "model": model,
         "messages": messages,
-        "temperature": 0.1,
+        "temperature": 0,
         "max_tokens": _max_output_tokens(),
     }
     started = time.monotonic()
