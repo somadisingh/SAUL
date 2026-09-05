@@ -1,0 +1,14 @@
+{
+  "sourceName": "MFA remediation configuration export",
+  "observedAt": "2026-09-05T13:00:00Z",
+  "scope": "Google Workspace, GitHub, and every human AWS production account",
+  "statements": [
+    "Google Workspace: MFA enforcement enabled for all 42 active users.",
+    "GitHub organization: two-factor authentication required for all 18 members.",
+    "AWS production account legacy-deploy: disabled; human access removed.",
+    "AWS production human account maya-admin: active: true | MFA: true.",
+    "AWS production human account devon-readonly: active: true | MFA: true.",
+    "Every remaining human AWS production account is listed above and has MFA: true."
+  ],
+  "syntheticFixture": true
+}
