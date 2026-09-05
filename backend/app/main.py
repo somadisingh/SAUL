@@ -19,7 +19,7 @@ from fastapi.exceptions import RequestValidationError  # noqa: E402
 from fastapi.responses import JSONResponse, Response  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
-from . import exports, investigator, llm  # noqa: E402
+from . import exports, investigator, llm, voice  # noqa: E402
 from .integrations import prism, regodit  # noqa: E402
 from .schemas import (  # noqa: E402
     AuditEvent,
@@ -59,6 +59,8 @@ app = FastAPI(
     version="1.0.0",
 )
 store = SQLiteStore()
+app.include_router(voice.create_router(store))
+app.add_exception_handler(voice.VoiceError, voice.error_handler)
 
 
 def _error(status: int, code: str, message: str) -> APIError:

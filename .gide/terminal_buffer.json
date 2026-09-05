@@ -1,0 +1,26 @@
+{
+  "1": {
+    "terminalId": "1",
+    "terminalName": "",
+    "commands": [],
+    "lastUpdated": 1788633186548
+  },
+  "2": {
+    "terminalId": "2",
+    "terminalName": "",
+    "commands": [
+      {
+        "command": "gide apikey create saul",
+        "output": [
+          "$ gide apikey create saul",
+          "bash: gide: command not found",
+          ""
+        ],
+        "timestamp": 1788633214946,
+        "exitCode": 127,
+        "hasError": true
+      }
+    ],
+    "lastUpdated": 1788633214947
+  }
+}

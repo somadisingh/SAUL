@@ -65,6 +65,15 @@ function json(method: string, body: unknown): RequestInit {
 }
 
 export const api = {
+  voiceStatus: () => request<{ configured: boolean }>("/voice/status"),
+  voice: async (path: string, signal: AbortSignal, audio?: Blob): Promise<Response> => {
+    const response = await fetch(`${API_BASE}${path}`, {
+      method: "POST", signal,
+      headers: audio ? { "Content-Type": audio.type } : {}, body: audio,
+    });
+    if (!response.ok) throw await parseError(response);
+    return response;
+  },
   health: () => request<Health>("/health"),
   listCases: () => request<{ cases: CaseSummary[] }>("/cases"),
   createCase: (seedDemo: boolean) => request<CaseSnapshot>("/cases", json("POST", { companyName: "AcmePay", seedDemo })),

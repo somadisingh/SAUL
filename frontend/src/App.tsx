@@ -328,7 +328,7 @@ export default function App() {
           <main className={`workspace-grid mobile-${mobilePanel}`}>
             <CaseSidebar questions={caseSnapshot.questions} selectedId={selectedQuestionId} onSelect={selectQuestion} />
             <div className="question-detail-wrap"><QuestionDetail question={selectedQuestion} sources={caseSnapshot.sources} pendingReview={caseSnapshot.needsInvestigation} onOpenCitation={openCitation} /></div>
-            <InterviewPanel question={selectedQuestion} messages={caseSnapshot.messages} disabled={Boolean(mutation)} onSend={sendMessage} />
+            <InterviewPanel key={caseSnapshot.id} caseId={caseSnapshot.id} question={selectedQuestion} messages={caseSnapshot.messages} disabled={Boolean(mutation)} onSend={sendMessage} />
           </main>
         </>
       )}

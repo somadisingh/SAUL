@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import VoiceControls from "./VoiceControls";
 import type { Message, MessageInput, Question } from "../types";
 
 export interface SendResult {
@@ -7,6 +8,7 @@ export interface SendResult {
 }
 
 interface Props {
+  caseId: string;
   question: Question | null;
   messages: Message[];
   disabled: boolean;
@@ -23,7 +25,8 @@ function readIdentity() {
   return { name: "Alex", role: "Engineering" };
 }
 
-export default function InterviewPanel({ question, messages, disabled, onSend }: Props) {
+export default function InterviewPanel({ caseId, question, messages, disabled, onSend }: Props) {
+  const [voiceBusy, setVoiceBusy] = useState(false);
   const [identity, setIdentity] = useState(readIdentity);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pendingIds, setPendingIds] = useState<Record<string, string>>({});
@@ -132,6 +135,10 @@ export default function InterviewPanel({ question, messages, disabled, onSend }:
           <button className={correctionMode ? "active" : ""} onClick={() => setCorrectionModes((current) => ({ ...current, [questionId]: true }))}>Correction</button>
         </div>
         {correctionMode && <p className="correction-help">Enter a complete correction with the accurate value and scope.</p>}
+        <VoiceControls key={`${caseId}:${questionId}:${question.followUp?.id ?? "none"}`} caseId={caseId} questionId={questionId} disabled={disabled} onBusy={setVoiceBusy} onTranscript={(text) => {
+          setDrafts(current => ({ ...current, [questionId]: [current[questionId], text].filter(Boolean).join(" ") }));
+          if (!question.followUp) setCorrectionModes(current => ({ ...current, [questionId]: true }));
+        }} />
         <label className="sr-only" htmlFor={`reply-${questionId}`}>{correctionMode ? "Correction" : "Employee response"}</label>
         <textarea
           id={`reply-${questionId}`}
@@ -143,7 +150,7 @@ export default function InterviewPanel({ question, messages, disabled, onSend }:
         {notice && <div className="composer-notice">{notice}</div>}
         <button
           className="primary-button full-button"
-          disabled={disabled || !draft.trim() || !identity.name.trim() || !identity.role.trim() || (!canReply && !correctionMode)}
+          disabled={disabled || voiceBusy || !draft.trim() || !identity.name.trim() || !identity.role.trim() || (!canReply && !correctionMode)}
           onClick={submit}
         >
           {disabled ? "Saving…" : pendingIds[questionId] ? "Retry safely" : correctionMode ? "Record correction" : "Send response"}
