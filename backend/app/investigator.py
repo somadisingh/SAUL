@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import llm
 from .integrations import prism
@@ -40,7 +40,7 @@ class ModelOutputError(Exception):
 class ModelCitation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     sourceId: str
-    quote: str
+    quote: str = Field(min_length=1, max_length=500)
 
 
 class ModelFact(BaseModel):
@@ -77,7 +77,7 @@ class ModelFollowUp(BaseModel):
 class ModelQuestionUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     questionId: str
-    answer: str
+    answer: str = Field(min_length=1, max_length=1_200)
     status: Literal[
         "verified",
         "employee_confirmed",
@@ -95,7 +95,7 @@ class ModelQuestionUpdate(BaseModel):
 class ModelInvestigation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     questions: list[ModelQuestionUpdate]
-    summary: str
+    summary: str = Field(max_length=1_000)
 
 
 @dataclass
@@ -115,6 +115,10 @@ value may be copied unless it is essential evidence. If these checks cannot be c
 guess or weaken them; return schema-valid unknown answers that require human review. The server
 independently validates citations, question coverage, and case-specific safety rules and will
 withhold the entire response if validation fails.
+Every question update and every required array must be present in one complete JSON object. Keep
+each answer under 1,200 characters and each exact citation quote under 500 characters. Do not
+repeat a long citation verbatim in the answer. If the available output budget cannot fit every
+question, return concise schema-valid unknown answers instead of partial or truncated JSON.
 
 Analyze every supplied question. Use exact supporting quotes copied from source content.
 Never invent source IDs, facts, dates, URLs, sponsor states, or missing evidence.
@@ -738,23 +742,51 @@ async def investigate(store: SQLiteStore, case: CaseSnapshot) -> InvestigationRe
             "citations_exact": False,
             "semantic_guardrails_valid": False,
         }
-        try:
-            parsed = _parse_json(exchange.output_message)
-            compliance_checks["schema_valid"] = True
-            _validate_complete(parsed, case)
-            compliance_checks["question_coverage_valid"] = True
-            _validate_citations(parsed, case)
-            compliance_checks["citations_exact"] = True
-            _validate_semantics(parsed, case)
-            compliance_checks["semantic_guardrails_valid"] = True
-        except ModelOutputError as exc:
-            validation_error = exc
-            repair_error = str(exc)
+        incomplete_output = exchange.finish_reason in {"length", "content_filter"}
+        if incomplete_output:
+            validation_error = ModelOutputError(
+                f"Provider returned incomplete output (finish_reason={exchange.finish_reason})."
+            )
+            repair_error = str(validation_error)
+        else:
+            try:
+                parsed = _parse_json(exchange.output_message)
+                compliance_checks["schema_valid"] = True
+                _validate_complete(parsed, case)
+                compliance_checks["question_coverage_valid"] = True
+                _validate_citations(parsed, case)
+                compliance_checks["citations_exact"] = True
+                _validate_semantics(parsed, case)
+                compliance_checks["semantic_guardrails_valid"] = True
+            except ModelOutputError as exc:
+                validation_error = exc
+                repair_error = str(exc)
 
         compliance_passed = validation_error is None
         payload = prism.build_payload(
             model=exchange.model,
-            input_messages=exchange.input_messages,
+            input_messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "task": "Compliance questionnaire investigation",
+                            "expected_question_count": len(case.questions),
+                            "evidence_manifest": [
+                                {
+                                    "sourceId": source.id,
+                                    "name": source.name,
+                                    "kind": source.kind,
+                                }
+                                for source in case.sources
+                            ],
+                            "full_corpus_processed_server_side": True,
+                        },
+                        separators=(",", ":"),
+                    ),
+                },
+            ],
             output_message=exchange.output_message,
             latency_ms=exchange.latency_ms,
             case_id=case.id,
@@ -762,7 +794,10 @@ async def investigate(store: SQLiteStore, case: CaseSnapshot) -> InvestigationRe
             metadata={
                 "case_revision": case.revision,
                 "phase": phase,
-                "evidence_ids": [source.id for source in case.sources],
+                "evidence_manifest": [
+                    {"sourceId": source.id, "name": source.name, "kind": source.kind}
+                    for source in case.sources
+                ],
                 "question_statuses_before": {
                     question.id: question.status for question in case.questions
                 },
@@ -772,6 +807,14 @@ async def investigate(store: SQLiteStore, case: CaseSnapshot) -> InvestigationRe
                 "compliance_status": "passed" if compliance_passed else "failed",
                 "compliance_checks": compliance_checks,
                 "pii_access": prism.pii_access_audit(exchange.input_messages),
+                "finish_reason": exchange.finish_reason,
+                "incomplete_output": incomplete_output,
+                "expected_question_count": len(case.questions),
+                "returned_question_count": len(parsed.questions) if parsed else 0,
+                "returned_question_ids": (
+                    [question.questionId for question in parsed.questions] if parsed else []
+                ),
+                "telemetry_input_mode": "evidence_manifest",
                 "requires_human_review": not compliance_passed,
                 "output_released_to_user": compliance_passed,
                 "validation_error_type": (

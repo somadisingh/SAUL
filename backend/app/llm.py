@@ -22,6 +22,7 @@ class ModelExchange:
     input_messages: list[dict[str, str]]
     output_message: str
     latency_ms: int
+    finish_reason: str
 
 
 def configured() -> bool:
@@ -51,6 +52,27 @@ def _content_from_response(body: dict[str, Any]) -> str:
     raise ModelProviderError("The model provider returned no text response.")
 
 
+def _finish_reason_from_response(body: dict[str, Any]) -> str:
+    try:
+        finish_reason = body["choices"][0].get("finish_reason")
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return "unknown"
+    return finish_reason if isinstance(finish_reason, str) else "unknown"
+
+
+def _max_output_tokens() -> int:
+    raw = os.getenv("LLM_MAX_OUTPUT_TOKENS", "8192").strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ModelNotConfiguredError("LLM_MAX_OUTPUT_TOKENS must be an integer.") from exc
+    if not 1_024 <= value <= 32_768:
+        raise ModelNotConfiguredError(
+            "LLM_MAX_OUTPUT_TOKENS must be between 1024 and 32768."
+        )
+    return value
+
+
 async def chat(
     system_prompt: str,
     user_prompt: str,
@@ -72,6 +94,7 @@ async def chat(
         "model": model,
         "messages": messages,
         "temperature": 0.1,
+        "max_tokens": _max_output_tokens(),
     }
     started = time.monotonic()
     try:
@@ -101,4 +124,5 @@ async def chat(
         input_messages=messages,
         output_message=_content_from_response(body),
         latency_ms=latency_ms,
+        finish_reason=_finish_reason_from_response(body),
     )
