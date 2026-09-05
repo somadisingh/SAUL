@@ -172,7 +172,7 @@ export default function UploadDialog({ open, disabled, canImportQuestionnaire, s
           <button className={tab === "questionnaire" ? "active" : ""} onClick={() => setTab("questionnaire")}>Questionnaire</button>
         </div>
         {tab === "source" ? (
-          <div className="dialog-body form-grid">
+          <div className="dialog-body form-grid" key="source-form">
             <label className="wide">Text file<input type="file" accept=".txt,.md,.json,.csv,text/plain,text/markdown,text/csv,application/json" disabled={disabled} onChange={(event) => event.target.files?.[0] && void readFile(event.target.files[0], "source")} /></label>
             <p className="format-note wide">UTF-8 .txt, .md, .json, or .csv only. Up to 30,000 characters. JSON is treated as evidence text, never executed.</p>
             <label>Source name<input value={name} disabled={disabled} onChange={(event) => setName(event.target.value)} /></label>
@@ -184,7 +184,7 @@ export default function UploadDialog({ open, disabled, canImportQuestionnaire, s
             <button className="primary-button wide" disabled={disabled} onClick={submitSource}>{disabled ? "Uploading…" : "Add evidence source"}</button>
           </div>
         ) : (
-          <div className="dialog-body form-grid">
+          <div className="dialog-body form-grid" key="questionnaire-form">
             {!canImportQuestionnaire && <div className="inline-warning wide">This case already has questions. Replacement is disabled; create a new blank case to import another questionnaire.</div>}
             <label>Format<select value={format} disabled={disabled || !canImportQuestionnaire} onChange={(event) => setFormat(event.target.value as "csv" | "json")}><option value="csv">CSV</option><option value="json">JSON</option></select></label>
             <label>Questionnaire file<input type="file" accept=".csv,.json,text/csv,application/json" disabled={disabled || !canImportQuestionnaire} onChange={(event) => event.target.files?.[0] && void readFile(event.target.files[0], "questionnaire")} /></label>
